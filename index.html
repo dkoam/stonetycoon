@@ -226,11 +226,19 @@ button:disabled{opacity:.42;cursor:not-allowed}
 <div class="fragmentCard" style="margin-top:10px;border-color:#d8b65d;background:linear-gradient(145deg,#443c2c,#242139)"><h3>✨ 돌멩이 초월</h3><p>돌멩이의 레벨 1000과 돌멩이의 조각 1,000개가 필요해. 임시 초월 효과로 수익이 10배가 돼.</p><button class="mainbtn" id="transcendBtn">초월하기 <span>1,000 조각 · Lv.1000</span></button><p id="transcendText" style="margin:9px 0 0">아직 초월하지 않았어.</p></div>
 </section>
 
-<div class="bottom"><span class="tiny">진행 상황은 이 기기에 자동 저장돼.</span><button class="reset" id="resetBtn">초기화</button></div>
+<div class="bottom"><span class="tiny">진행 상황은 이 기기와 로그인한 계정에 자동 저장돼.</span><button class="reset" id="resetBtn">초기화</button></div>
 <div class="footer">STONE AIRWAYS · STONE BANK · 돌멩이는 오늘도 돌을 물어옵니다.<br>💡 추천 플레이: 초반에는 오토마우스 없이 직접 먹이를 줘 보세요!</div>
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="overlay" id="authOverlay" style="z-index:50"><div class="modal" style="width:min(440px,100%)">
+<h2>☁️ 돌멩이 계정</h2><p>계정으로 로그인하면 다른 기기에서도 저장 데이터를 이어서 할 수 있어!</p>
+<input id="authEmail" type="email" autocomplete="email" placeholder="이메일" style="width:100%;box-sizing:border-box;margin:6px 0;padding:12px;border-radius:10px">
+<input id="authPassword" type="password" autocomplete="current-password" placeholder="비밀번호 (6자 이상)" style="width:100%;box-sizing:border-box;margin:6px 0;padding:12px;border-radius:10px">
+<p id="authMessage" role="status" style="min-height:38px;overflow-wrap:anywhere"></p>
+<button id="loginBtn" type="button">로그인</button><button id="signupBtn" type="button" class="ghost">회원가입</button>
+<p style="font-size:12px;opacity:.8">계정 비밀번호는 Supabase 인증으로 처리돼. 다른 사람과 공유하지 마!</p>
+</div></div>
 <div class="overlay" id="startOverlay"><div class="modal"><h2>돌멩이 키우기</h2><p>먹이를 주고 레벨을 올려 봐! 피버타임을 충전하면 다음 배달 수익이 5배가 돼.</p><p>💡 초반에는 직접 먹이를 주면서 성장시키는 걸 추천해!</p><button id="startBtn" type="button">돌멩이 키우기 시작!</button></div></div>
 <div class="overlay hidden" id="releaseOverlay"><div class="modal"><h2>🕊️ 돌멩이 방생 성공!</h2><p id="releaseText">돌멩이가 하늘로 날아갔어.</p><button id="releaseConfirmBtn">환생하고 다시 시작</button></div></div>
 
@@ -250,8 +258,13 @@ button:disabled{opacity:.42;cursor:not-allowed}
   <div class="cgrid"><button class="cbtn" id="consoleExportBtn" type="button">내보내기</button><button class="cbtn" id="consoleImportBtn" type="button">가져오기</button><button class="cbtn" id="consolePwBtn" type="button">비밀번호 변경</button></div>
   <button class="ghost" id="consoleCloseBtn" type="button">닫기</button><button class="ghost" id="consoleLockBtn" type="button">잠그고 닫기</button>
  </div></div></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 (()=>{
+const SUPABASE_URL='https://rpcxjnarcspimhlbxaxl.supabase.co';
+const SUPABASE_KEY='sb_publishable_B9yx_j2RJfqzgmPbNokt7Q_sEhmwTuG';
+const sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+let signedInUser=null, cloudSaveBusy=false, cloudSaveTimer=null, authReady=false;
 const $=id=>document.getElementById(id);
 // 값이 바뀔 때만 DOM을 갱신 (버튼 클릭이 씹히는 문제 방지)
 const sha256=m=>{
@@ -365,6 +378,17 @@ const income=()=>haul()/cycle();
 function save(){
  game.excitedDeliveries=excitedDeliveries;game.excitedReady=excitedReady;
  try{localStorage.setItem('minjunSaveV4',JSON.stringify(game))}catch(e){}
+ if(signedInUser && authReady){
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer=setTimeout(async()=>{
+   if(!signedInUser||cloudSaveBusy)return;
+   cloudSaveBusy=true;
+   try{
+    const {error}=await sb.from('game_saves').upsert({user_id:signedInUser.id,save_data:game,updated_at:new Date().toISOString()},{onConflict:'user_id'});
+    if(error) console.warn('클라우드 저장 실패:',error.message);
+   }catch(e){console.warn('클라우드 저장 실패:',e)}finally{cloudSaveBusy=false;}
+  },1200);
+ }
 }
 function note(t){
  const log=$('log'),line=document.createElement('div');
@@ -669,6 +693,46 @@ let logoClicks=0,logoTimer;
 document.querySelector('.logo').addEventListener('click',()=>{
  logoClicks++;clearTimeout(logoTimer);logoTimer=setTimeout(()=>logoClicks=0,2000);
  if(logoClicks>=7){logoClicks=0;showConsole()}
+});
+// 로그인한 계정의 서버 저장본을 먼저 불러온 뒤 게임을 시작한다.
+const authMessage=(msg)=>{$('authMessage').textContent=msg};
+async function enterAccount(user){
+ signedInUser=user;
+ authMessage('클라우드 저장 데이터를 불러오는 중...');
+ const {data,error}=await sb.from('game_saves').select('save_data').eq('user_id',user.id).maybeSingle();
+ if(error){authMessage('저장 데이터를 불러오지 못했어: '+error.message);signedInUser=null;return;}
+ if(data && data.save_data){
+  const o=data.save_data;
+  game={...defaults,...o,transcended:!!o.transcended,research:{...defaults.research,...(o.research||{})}};
+  excitedDeliveries=Math.min(game.excitedDeliveries||0,currentFeverNeed());excitedReady=!!game.excitedReady;
+ }else{
+  // 이 계정에 저장본이 없는 첫 로그인일 때 현재 기기의 진행 상황을 최초 저장한다.
+  game.excitedDeliveries=excitedDeliveries;game.excitedReady=excitedReady;
+ }
+ authReady=true;
+ $('authOverlay').classList.add('hidden');
+ render();save();
+ if(!data) authMessage('');
+}
+$('loginBtn').addEventListener('click',async()=>{
+ const email=$('authEmail').value.trim(),password=$('authPassword').value;
+ if(!email||!password){authMessage('이메일과 비밀번호를 입력해 줘.');return;}
+ $('loginBtn').disabled=true;$('signupBtn').disabled=true;authMessage('로그인 중...');
+ try{const {data,error}=await sb.auth.signInWithPassword({email,password});if(error)throw error;await enterAccount(data.user);}
+ catch(e){authMessage('로그인 실패: '+e.message)}finally{$('loginBtn').disabled=false;$('signupBtn').disabled=false;}
+});
+$('signupBtn').addEventListener('click',async()=>{
+ const email=$('authEmail').value.trim(),password=$('authPassword').value;
+ if(!email||!password){authMessage('이메일과 비밀번호를 입력해 줘.');return;}
+ if(password.length<6){authMessage('비밀번호는 6자 이상으로 해 줘.');return;}
+ $('loginBtn').disabled=true;$('signupBtn').disabled=true;authMessage('회원가입 중...');
+ try{const {data,error}=await sb.auth.signUp({email,password});if(error)throw error;
+  if(data.session&&data.user){await enterAccount(data.user)}else{authMessage('가입 요청 완료! 이메일 인증 링크를 확인한 뒤 로그인해 줘. Supabase에서 이메일 인증을 끈 경우 바로 로그인할 수 있어.');}
+ }catch(e){authMessage('회원가입 실패: '+e.message)}finally{$('loginBtn').disabled=false;$('signupBtn').disabled=false;}
+});
+sb.auth.getSession().then(async({data,error})=>{
+ if(error){authMessage('계정 확인 실패: '+error.message);return;}
+ if(data.session?.user) await enterAccount(data.session.user);
 });
 render();setInterval(tick,250);
 })();
