@@ -659,7 +659,11 @@ $('resetBtn').onclick=()=>{
  game=normalize();cycleProgress=0;launcherProgress=0;fullRemaining=0;excitedReady=false;excitedDeliveries=0;
  save();note('새로운 돌멩이 키우기 시작!');render();toast('초기화 완료');
 };
-$('startBtn').addEventListener('click',()=>{$('startOverlay').classList.add('hidden');save()});
+$('startBtn').onclick = function() {
+  const overlay = document.getElementById('startOverlay');
+  overlay.style.display = 'none';
+  save();
+};
 window.addEventListener('beforeunload',save);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)save()});
 function tick(){
